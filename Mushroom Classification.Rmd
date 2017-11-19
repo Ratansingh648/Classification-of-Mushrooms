@@ -1,0 +1,121 @@
+---
+title: "Poisonous and Non-Poisonous Mushroom Classification"
+author: "Ratan Madankumar Singh"
+date: "14 November 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This files contains a basic analysis of classification of Poisonous and Non Poisonous Mushrooms. This dataset is taken from <https://kaggle.com>. This dataset contains 8124 observations and 22 attributes that describes the two types of Mushrooms as **1. Eatable and 2. Poisonous**
+Before classifying the dataset, we would analyze the effect of various attributes on the target variables. I am performing analysis on dataset stored on my local machine.
+
+
+```{r mushrooms}
+mushrooms <- read.csv("C:/Users/Ratan Singh/Desktop/R Markdown Files/mushrooms.csv",header = TRUE)
+summary(mushrooms)
+```
+
+## Identifying the important attributes
+
+From 22 attributes, we need to identify the features which are actually important for the analysis. To identify those feature, we would use **Bayesian probability**. This methods relies on fact that if the toxicity of mushroom Y is independent of a particular feature X then **P(Y/X) = P(X)**. That is the attribute should not affect / affect negligibly to the proportion of natural occurance of toxic mushrooms.   
+Lets first analyze the natural occurance of poisonous mushrooms.
+
+```{r toxic mushroom proportion}
+class_count <- table(mushrooms$class)
+class_proportion <- class_count[2]/(class_count[1]+class_count[2])
+print("Proportion of poisonous mushrooms occuring naturally is::")
+print(class_proportion)
+```
+
+Here we can observe that almost **48.2%** of the naturally occuring mushrooms are toxic in nature. Now let us define a function which would compute the probability of a mushroom being posionous given a known attribute. 
+
+
+```{r proportion function}
+ComputeProportion <- function(target,attribute_dataset,Columns,centroid){
+        len_attr <- length(Columns)
+        RMSE <- NULL
+        for(i in 1:len_attr){
+        tab <- table(target,attribute_dataset[,Columns[i]])
+        prop <- tab[2,]/(tab[1,]+tab[2,])
+        centr_prop <- prop - centroid
+        Err <- sqrt(mean(centr_prop*centr_prop))
+        RMSE <-rbind(RMSE,Err)
+        }
+        norm_err <- (RMSE-min(RMSE))/(max(RMSE)-min(RMSE))
+        err_mat <- cbind(colnames(mushrooms[,Columns]),RMSE)
+        err_mat <- cbind(err_mat,norm_err)
+        colnames(err_mat) <- c("Column name","RMSE","Norm. Error")
+        err_mat
+}
+```
+This function iterates itself to compute the proportion of poisonous mushrooms for attributes mentioned in **'Columns'** from the dataset called **attribute_dataset**. The parameter **centroid** indicates the optimal value of occurance. The function returns a matrix containing respective columns and respective deviation from the centroid. Higher the deviation from the centroid value, the more important is feature for the classification. We saved this function in Rscript file with name **'ComputeProportion.R'**.
+
+
+```{r proportion generation}
+
+proportions_tab <- ComputeProportion(mushrooms[,1],mushrooms,c(2:23),0.482)
+print(proportions_tab)
+```
+
+From above table we can observe that the attributes **stalk.shape** and **veil.type** has the lowest score among the all attributes and hence these two attributes can be discarded. The attribute highest influencing the toxicity is **odor**. So while our modelling we can practically eliminate attributes **stalk.shape** and **veil.type**.The relative importance of the attributes can be determined with the normalized errors. Therefore we can remove them from the attributes list. This technique is simple yet very useful to remove the attributes which are least useful and hence saving the computing efforts.
+
+Now modeling our classifier using logistic regression with new attributes. Splitting dataset into two sets for training and testing. We are splitting training vs testing data in ratio 7:3. Before splitting it becomes very important to shuffle the data properly so that our training data is not biased and hence does not create error due to lack of randomized data. Also we are seperating attributes from target variables.
+
+
+```{r data splitting, echo=TRUE}
+mushrooms <- mushrooms[,-c(11,17)]
+print(dim(mushrooms))
+
+set.seed(1)
+randomized_Data <- mushrooms[sample(1:nrow(mushrooms),nrow(mushrooms)),]
+split_limit <- round(nrow(mushrooms)*0.7)
+
+train_data <- randomized_Data[1:split_limit,]
+test_data <- randomized_Data[(split_limit+1):nrow(mushrooms),]
+
+classifier_model <- glm(class ~ ., data = train_data,family = binomial)
+summary(classifier_model)
+
+```
+Here we can observe that **Coefficients: (9 not defined because of singularities) **. This error is thrown when two or more features are perfectly correlated. Therefore coefficient value of such feature is Null. Therefore we remove such features. In our case we are removing **"stalk.color.above.ring","stalk.color.below.ring","veil.color","ring.number","ring.type","spore.print.color"** and **"habitat"**
+Also there is a warning message stating **Warning: glm.fit: algorithm did not converge**. This occurs when number of internal fisher iteration are not enough. We can change it by using one more parameter  **maxit** while modeling the classifier. Default value of fisher iterations are 25. Here we are setting it to 100 for convergence.
+
+```{r using glm with maxit, echo=TRUE}
+train_data <- train_data[,-c(14,15,16,17,18,19,21)]
+test_data <- test_data[,-c(14,15,16,17,18,19,21)]
+classifier_model <- glm(class ~ ., data = train_data,family = binomial,maxit = 100)
+summary(classifier_model)
+```
+Now let's make predictions using our model on test data. By setting parameter **type = "response"**, we are computing probability of a mushroom being poisonous or not. This vector is then thresholded with a threshold value of 0.5. To have a summary of predictions vs actual results , we compute confusion matrix. 
+
+```{r prediction}
+predicted_output <- predict.glm(classifier_model,newdata = test_data[,-1],type = "response")
+predicted_output <- predicted_output >= 0.5
+predicted_output <- gsub("TRUE","p",predicted_output)
+predicted_output <- gsub("FALSE","e",predicted_output)
+
+actual_output <- test_data[,1]
+confusion_matrix <- table(predicted_output,actual_output)
+```
+Now let's analyze the different ways to measure the efficiency of model that we trained. We are computing following metrics to evaluate our model - **Accuracy, Precision, Recall and F-Score**
+
+```{r Accuracy}
+TP <- confusion_matrix[2,2]
+TN <- confusion_matrix[1,1]
+FP <- confusion_matrix[2,1]
+FN <- confusion_matrix[1,2]
+
+Accuracy <- (TP+TN)*100/(TP+TN+FP+FN)
+print(Accuracy)
+Precision <- TP*100/(TP+FP)
+print(Precision)
+Recall <- TP*100/(TP+FN)
+print(Recall)
+F_Score <- 2*TP*100/(2*TP+FP+FN)
+print(F_Score)
+```
